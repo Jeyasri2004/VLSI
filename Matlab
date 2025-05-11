@@ -1,0 +1,75 @@
+#Convert the Image into Hex values
+
+clc;
+clear;
+close all;
+img=imread([‘cars1.jpg’]);
+ifsize(img,3)==3
+img_gray=rgb2gray(img);
+else
+img_gray=img;
+end
+img_resized=imresize(img_gray,[256,256]);
+img_uint8=uint8(img_resized);
+fieldID=fopen(‘gray_image.mem’,’w’);
+fprint(fieldID,’%02X\n’,img_uint8);
+fclose(fieldID);
+figure,imshow(img_uint8);
+title(‘GrayScale Image’);
+disp(‘Grayscale image saved as gray_image.mem’);
+
+#convert the Hex values in the file into image to detect the license plate
+
+% 1. Read the .mem file
+filename = 'led_output.mem'; % Your file
+try
+    fileContent = fileread(filename);
+    lines = strsplit(fileContent, '\n');
+    lines = lines(~cellfun('isempty', lines));
+    
+    hexValues = zeros(numel(lines), 1);
+    validCount = 0;
+    
+    for i = 1:numel(lines)
+        try
+            hexValues(i) = hex2dec(strtrim(lines{i}));
+            validCount = validCount + 1;
+        catch
+            warning('Invalid hex value in line %d: %s', i, lines{i});
+        end
+    end
+    
+    hexValues = hexValues(1:validCount);
+catch ME
+    error('File error: %s', ME.message);
+end
+
+% 2. Reshape
+numPixels = numel(hexValues);
+imgSize = round(sqrt(numPixels));
+
+if imgSize^2 ~= numPixels
+    warning('Padding data from %d to %d pixels', numPixels, imgSize^2);
+    paddedImg = zeros(imgSize^2, 1);
+    paddedImg(1:numPixels) = hexValues;
+else
+    paddedImg = hexValues;
+end
+
+img = reshape(paddedImg, [imgSize, imgSize])';
+img = double(img);
+img = (img - min(img(:))) / (max(img(:)) - min(img(:)));
+
+% 3. Display and manually crop
+figure;
+imshow(img, []);
+title('Click and Drag to Select Number Plate');
+roi = drawrectangle('Color','red'); % Drag rectangle manually
+position = roi.Position;
+
+% 4. Crop number plate
+numberPlate = imcrop(img, position);
+
+figure;
+imshow(numberPlate, []);
+title('Extracted Number Plate Only');
