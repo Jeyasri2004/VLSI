@@ -1,0 +1,232 @@
+module image_processor(
+    output reg [15:0] image_pixel_addr,
+    input  [7:0] image_pixel_val,
+    input  clk,
+    input  rst,
+    input  ccl_start,
+    input  [7:0] ccl_th_low,
+    input  [7:0] ccl_th_high,
+    output reg ccl_done,
+    output reg [7:0] ccl_mem_result_addr,
+    output reg [55:0] ccl_mem_result_data
+);
+
+    reg [15:0] pixel_counter;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pixel_counter <= 0;
+            ccl_done <= 0;
+            image_pixel_addr <= 0;
+        end
+        else if (ccl_start) begin
+            if (pixel_counter < 16'hFFFF) begin
+                pixel_counter <= pixel_counter + 1;
+                image_pixel_addr <= pixel_counter;
+            end
+            else begin
+                ccl_done <= 1;
+            end
+
+            if (image_pixel_val >= ccl_th_low && image_pixel_val <= ccl_th_high) begin
+                ccl_mem_result_addr <= pixel_counter[7:0];
+                ccl_mem_result_data <= {48'b0, image_pixel_val};
+                $display("IMAGE_PROCESSOR: Result Addr: %h | Result Data: %h", ccl_mem_result_addr, ccl_mem_result_data);
+            end
+        end
+    end
+
+    always @(posedge clk) begin
+        $display("IMAGE_PROCESSOR: Pixel Counter: %d | Pixel Value: %h | Result Addr: %h | Result Data: %h",
+                pixel_counter, image_pixel_val, ccl_mem_result_addr, ccl_mem_result_data);
+        $display("IMAGE_PROCESSOR DEBUG: Pixel Addr: %h | Pixel Value: %h", image_pixel_addr, image_pixel_val);
+    end
+endmodule
+
+module CreateObj (  
+    input wire clk,  
+    input wire rst,  
+    input wire start,  
+    input wire [7:0] thresh,  
+    input wire [55:0] ObjInfo,  
+    input wire [7:0] ImgVal,  
+    input wire [7:0] ObjAddr1,  
+    output reg [15:0] ImgAddr,  
+    output reg [5:0] Char,  
+    output reg CharCheck,  
+    output reg active,  
+    output reg done,  
+    output reg [7:0] LED_output   // LED output for Char and CharCheck
+);  
+
+    reg [5:0] obj_count;  
+
+    // Reset and initialization  
+    always @(posedge clk or posedge rst) begin  
+        if (rst) begin  
+            ImgAddr <= 0;  
+            Char <= 0;  
+            CharCheck <= 0;  
+            active <= 0;  
+            done <= 0;  
+            obj_count <= 0;  
+            LED_output <= 8'b0;  // Reset LEDs to 0
+            $display("RESET: All values reset.");  
+        end   
+        else if (start && !done) begin  
+            active <= 1;  
+            $display("START detected. Active set to 1.");  
+
+            // Debug current pixel value vs. threshold  
+            $display("Current ImgVal = %h, Thresh = %h", ImgVal, thresh);  
+
+            // Check if pixel meets the threshold  
+            if (ImgVal >= thresh) begin  
+                Char <= ImgVal[5:0]; // Store the lower 6 bits of ImgVal  
+                CharCheck <= 1;  
+                obj_count <= obj_count + 1;  
+                #50;
+                $display("? Pixel Passed! Char updated to %h, CharCheck set to 1, ObjCount now %d", Char, obj_count);  
+            end   
+            else begin  
+                CharCheck <= 0;  
+                $display("Pixel Failed! CharCheck remains 0. ImgVal: %h is less than Thresh: %h", ImgVal, thresh);  
+            end  
+
+            // Address generation  
+            ImgAddr <= {ObjAddr1, 8'b0}; // Combine ObjAddr1 with 8 zeros for ImgAddr  
+            $display("Generated Address: %h using ObjAddr1: %h", ImgAddr, ObjAddr1);  
+
+            // Stop when  objects are detected  
+            if (ImgAddr == 16'hFFFF) begin  
+                done <= 1;  
+                active <= 0;  
+                $display("DONE! Reached last pixel address. done=1, active=0."); 
+            end
+        end
+    end  
+
+    // Map Char  to the LED output
+    always @(*) begin
+        if (active|| CharCheck) begin
+            LED_output = {Char};  // Display CharCheck and Char on LEDs
+        end
+    end  
+
+    // Debug output  
+    always @(posedge clk) begin  
+        if (active ) begin  
+            $display("DEBUG: ImgVal: %h | Thresh: %h | Char: %h | CharCheck: %b | Obj Count: %d",   
+                ImgVal, thresh, Char, CharCheck, obj_count);  
+        end  
+    end  
+
+endmodule
+    module CreateObj_tb;  
+    reg clk;  
+    reg rst;  
+    reg start;  
+    reg [7:0] thresh;  
+    reg [7:0] ImgVal;  
+    reg [7:0] image_pixel_val1;  
+    wire [15:0] image_pixel_addr1;  
+    wire [7:0] ObjAddr1;  
+    wire [55:0] ObjInfo;  
+    wire ccl_done;  
+    wire [15:0] ImgAddr;  
+    wire [5:0] Char;  
+    wire CharCheck;  
+    wire active;  
+    wire done;  
+    wire [7:0] LED_output; // Ensure this matches your CreateObj declaration  
+
+    integer i;  
+    reg [15:0] image_inv [0:65535];  
+    integer log_file; // File descriptor for logging  
+
+    // Instantiate the image_processor module  
+    image_processor image_processor_inst (  
+        .image_pixel_addr(image_pixel_addr1),  
+        .image_pixel_val(image_pixel_val1),  
+        .clk(clk),  
+        .rst(rst),  
+        .ccl_start(start),  
+        .ccl_th_low(8'd10),  
+        .ccl_th_high(8'd200),  
+        .ccl_done(ccl_done),  
+        .ccl_mem_result_addr(ObjAddr1),  
+        .ccl_mem_result_data(ObjInfo)  
+    );  
+
+    // Instantiate the CreateObj module  
+    CreateObj uut (  
+        .clk(clk),  
+        .rst(rst),  
+        .start(start),  
+        .thresh(thresh),  
+        .ObjInfo(ObjInfo),  
+        .ImgVal(image_pixel_val1),  
+        .ObjAddr1(ObjAddr1),  
+        .ImgAddr(ImgAddr),  
+        .Char(Char),  
+        .CharCheck(CharCheck),  
+        .active(active),  
+        .done(done),  
+        .LED_output(LED_output) // Ensure this matches your CreateObj declaration  
+    );  
+
+    // Clock generation  
+    always begin  
+        #10 clk = ~clk; // 50MHz clock  
+    end  
+
+    // Initial block  
+    initial begin  
+        $display("Starting Testbench for CreateObj with Image Data");  
+
+        // Open the log file for writing at the beginning  
+        log_file = $fopen("led_output.txt", "w");  
+        if (log_file == 0) begin  
+            $display("ERROR: Could not open LED output file.");  
+            $finish;  
+        end  
+        
+        // Initialize signals  
+        rst = 1;  
+        start = 0;  
+        thresh = 8'd10;  // Set your threshold value  
+          
+
+        #20 rst = 0; // Deassert reset after some time  
+        
+        // Load pixel values  
+        $readmemh("gray_image .mem", image_inv);  
+
+        #20 start = 1; // Start processing  
+
+        // Process pixels  
+        for (i = 0; i < 65536; i = i + 1) begin  
+            @(posedge clk);  
+            image_pixel_val1 <= image_inv[i];  // Send pixel to image_processor  
+            ImgVal <= image_inv[i];  
+        end  
+
+        #100; // Wait for processing to complete  
+        
+        // Close the log file  
+        $fclose(log_file);  
+        $finish;  
+    end
+    always @(posedge clk) begin  
+    if (active || CharCheck) begin  
+        $fdisplay(log_file, "0x%h", LED_output);  
+    end  
+
+    if (active) begin  
+        $display("DEBUG: ImgVal = %h | Thresh = %h | Char = %h | CharCheck = %b | Active = %b | Done = %b",   
+            ImgVal, thresh, Char, CharCheck, active, done);  
+    end  
+end
+
+endmodule
+
